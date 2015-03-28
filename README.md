@@ -269,36 +269,6 @@ actuals         ::= /empty/ | expr_list
 expr_list       ::= expr | expr "," expr_list
 </pre>
 
-
-</div><div class="slide">
- <h1>Parsing top-level declarations</h1>
-
-<p class="first">Top-level declarations are tricky to parse, both with top-down
-and bottom-up parsing methods. The problem comes from the fact that
-when <code>typename</code> has been parsed and is followed by <code>ident</code>.
-the parser cannot determine if the <code>typename</code> should be a
-<code>typename</code> for a variable declaration or a <code>funtype</code>
-for a function declaration. For example,
-</p><pre class="example">int x
-</pre>
-might be the start of a variable declaration or the start of a
-function declaration.<p></p>
-
-<p>The problem can be solved in two different ways.</p>
-
-<p>One alternative is to make two versions of the function declaration
-production, one with <code>typename</code> first, and one with <code>void</code>.  first. This
-eliminates the ambiguity, but the cost is an additional production.</p>
-
-<p>The other alternative is to allow <code>void</code> as an alternative in
-<code>typename</code>, and to replace <code>funtype</code> with <code>typename</code>.
-This however means that the grammar accepts
-variable or array declarations with <code>void</code> as
-base type: they must be detected and rejected, either by the syntax-tree
-building code, or by the type checking code.
-(This solution is required for full C since full C includes
-variable declarations such as <code>void *ptr</code>.)</p>
-
 <h3>Expression operator precedence table</h3>
 
 <h4>Prefix unary operators</h4>

@@ -1,0 +1,577 @@
+// don't touch!!
+options
+{
+  OUTPUT_DIRECTORY = "generated";
+  // DEBUG_PARSER = true;
+}
+
+PARSER_BEGIN(AyeC)
+
+package rtl;
+
+import java.util.*;
+import java.io.*; 
+import java.nio.file.*; 
+
+class AyeC {
+  public static void main(String[] arg) 
+  throws ParseException, IOException {
+    if (arg.length != 1) {
+        System.out.println("Usage: AyeC <input file name>");
+        System.exit(0);
+    }
+    InputStream is = new FileInputStream(arg[0]);
+    AyeC parser = new AyeC(is);
+    Node tree = Start();
+    //tree.print("");
+
+    System.out.println("\n==========");
+    System.out.println("" + arg[0] + "\n");	// prints out the file name
+
+    RTLNode rtlTree = Semantic.checkProgram(tree);
+    //rtlTree.print();
+    if (rtlTree != null) {
+      //System.out.println("Check succeeded");
+      System.out.println("==========\n");
+      AbsynToRTL codegen = new AbsynToRTL(rtlTree);
+      //System.out.println(codegen.generateIC());
+
+      String intermediateCode = codegen.generateIC();
+
+      //System.out.println(intermediateCode);
+
+      Path p = Paths.get("" + arg[0]);
+      String fileName = p.getFileName().toString();
+      fileName = fileName.replace(".c", "");
+
+      RTLtoMIPS assembler = new RTLtoMIPS(fileName, intermediateCode);
+      String mips = assembler.produceMIPSCode();
+      //assembler.produceMIPSCode();
+      System.out.println(mips);
+
+    } else { 
+      System.out.println("Check failed");
+    } 
+
+  }
+}
+
+PARSER_END(AyeC)
+
+//https://javacc.java.net/doc/tokenmanager.html
+SKIP : { " " | "\t" | "\f"}
+SKIP : {<CNEWLINE : "\n" | "\r" | "\r\n">}
+
+//https/javacc.java.net/doc/tokenmanager.html
+SKIP : { "/*" : WithinComment }
+<WithinComment> SKIP : { "*/" : DEFAULT }
+<WithinComment> MORE : { <~[]> }
+
+// creates a special token that does not participate in the parsing
+SPECIAL_TOKEN : { <SINGLE_LINE_COMMENT : "//" (~["\n", "\r"])* ("\n" | "\r" | "\n\r")> }
+
+TOKEN : {<CHAR : "char">}
+TOKEN : {<ELSE : "else">}
+TOKEN : {<EXTERN : "extern">}
+TOKEN : {<IF : "if">}
+TOKEN : {<INT : "int">}
+TOKEN : {<RETURN : "return">}
+TOKEN : {<VOID : "void">}
+TOKEN : {<WHILE : "while">}
+
+TOKEN : {<NOTEQ : "!=">}
+TOKEN : {<NOT : "!">}
+TOKEN : {<ANDAND : "&&">}
+TOKEN : {<OROR : "||">}
+TOKEN : {<LPAREN : "(">}
+TOKEN : {<RPAREN : ")">}
+TOKEN : {<MUL : "*">}
+TOKEN : {<PLUS : "+">}
+TOKEN : {<COMMA : "," >}
+TOKEN : {<MINUS : "-" >}
+TOKEN : {<DIV : "/" >}
+TOKEN : {<SEMI : ";" >}
+TOKEN : {<LTEQ : "<=" >}
+TOKEN : {<LT : "<" >}
+TOKEN : {<EQEQ : "==" >}
+TOKEN : {<EQ : "=" >}
+TOKEN : {<GTEQ : ">=" >}
+TOKEN : {<GT : ">" >}
+TOKEN : {<LBRACK : "[" >}
+TOKEN : {<RBRACK : "]" >}
+TOKEN : {<LBRACE : "{" >}
+TOKEN : {<RBRACE : "}" >}
+
+// special tokens
+TOKEN : {<INCLUDE : "#include" >}
+TOKEN : {<DOT : "." >}
+
+TOKEN : {<STRING : "\"" ("\\" ("\\" | "\n" | "\r" | "\"") | (~["\\", "\n", "\r", "\""])*) "\"" >}
+TOKEN : {<INTEGER_LITERAL : ["0"-"9"] | ["1"-"9"](["0"-"9"])+ >}
+
+// https://javacc.java.net/doc/JavaCC.html
+TOKEN : {<CHAR_LITERAL : "\'" (~["\'","\\","\n","\r"] | "\\" (["n","t","b","r","f","\\","\'","\""])) "\'" >}
+TOKEN : {<IDENT : ["a"-"z","A"-"Z"](["a"-"z", "A"-"Z", "0"-"9", "_"])* >}
+
+TOKEN : { <ERROR : ~[]>}
+
+void Epsilon() : { } { {} }
+
+Node Start() : 
+{
+  Node tree = new Node(Id.PROGRAM);
+  Node td;
+}
+{
+    ( td = TopLevelDeclaration() { tree.add(td); }
+    )*
+
+    <EOF> { return tree; }
+}
+
+Node TopLevelDeclaration() : 
+{
+  Node n;
+}
+{
+  LOOKAHEAD(3)
+  n = Declaration() <SEMI> { return n; } 
+  | n = Function() { return n; }
+  | n = IncludeFile() {return n; }
+}
+
+Node Function() :
+{
+  Node tld = new Node(Id.FUNC);
+  Node bt;
+  Node dr;
+  Node body;
+  Node formals;
+  Node s;
+}
+{
+  bt = ReturnType() { tld.add(bt); }
+    Declarator(tld)
+    (
+      FunctionParameters(tld)
+      (
+        body = CompoundStatement() { tld.add(body); }
+      | 
+        <SEMI>
+      )	
+    | 
+      { }
+    )
+
+  { return tld; }
+}
+    
+//List<Node> FunctionParameters () :
+void FunctionParameters (Node func) :
+{ 
+  Node f;
+}
+{ <LPAREN> 
+  (
+    <VOID> { func.add(new Node(Id.VOID)); } 
+  |
+    f = Declaration() { func.add(f); }
+    ( <COMMA>
+      f = Declaration() { func.add(f); }
+    )*
+  )
+  <RPAREN>
+}
+
+Node Declaration () :
+{
+  Node d = new Node(Id.VARDEC);
+  Node bt;
+  Node dr;
+}
+{
+  bt = DeclarationType() { d.add(bt); }
+  Declarator(d) { return d; }
+}
+
+Node SimpleDeclaration () : 
+{
+  Node d = new Node(Id.VARDEC);
+  Node bt;
+  Node id;
+}
+{
+  bt = DeclarationType() { d.add(bt); }
+  id = Identifier() { d.add(id); }
+  <SEMI>
+  { return d; }
+}
+
+Node ReturnType () :
+{}
+{
+  <CHAR> { return new Node(Id.CHAR); }
+|
+  <INT> { return new Node(Id.INT); }
+|
+  <VOID> { return new Node(Id.VOID); }
+}
+
+Node DeclarationType () :
+{}
+{
+  <CHAR> { return new Node(Id.CHAR); }
+|
+  <INT> { return new Node(Id.INT); }
+}
+
+void Declarator (Node p) :
+{ 
+  Node id;
+  Node r;
+}
+{
+  LOOKAHEAD(2)
+  <LBRACK> <RBRACK> { p.add(new Node(Id.ARRAY)); }
+  |
+    id = Identifier() { p.add(id); }
+    ( (<LBRACK>
+      ((r = IntegerLiteral() { p.add(r); } ( r = IntegerLiteral() { p.add(r); } )*) // with size
+      | { {p.add(new Node(Id.INTEGER_LITERAL, new Token(AyeCConstants.INT, "-1")));} }) // without size
+    <RBRACK> )|{ }
+  )
+}
+
+Node CompoundStatement () :
+{
+  Node cs = new Node(Id.COMPOUND_STMNT);
+  Node d;
+  Node s;
+  Node r;
+}
+{
+  <LBRACE>
+  ( d = Declaration() { cs.add(d); } <SEMI>)*
+  ( s = Statement() { cs.add(s); })*
+  <RBRACE>
+
+  { return cs; }
+}
+
+Node Statement() :
+{
+  Node stmt = new Node(Id.STMNT);
+  Node s;
+  Token t;
+  Node c;
+  Node s1;
+  Node s2;
+  Node r;
+  Node e;
+}
+{
+  (s = SimpleCompoundStatement() { stmt.add(s); }
+|
+  e = Expression() { stmt.add(e); }
+  <SEMI> // expr;
+|
+  <SEMI> { stmt.add(new Node(Id.EMPTY_STMNT)); } //;
+|
+  t = <IF> { s = new Node(Id.IF, t); stmt.add(s); }
+  <LPAREN>
+  e = Expression() { s.add(e); }
+  <RPAREN>
+  s1 = Statement() { s.add(s1); }
+  ( LOOKAHEAD(1)
+    <ELSE>
+    s2 = Statement() { s.add(s2); } ) *
+| 
+  t = <WHILE> { s = new Node(Id.WHILE, t); stmt.add(s); }
+  <LPAREN>
+  e = Expression() { s.add(e); }
+  <RPAREN>
+  s2 = Statement() { s.add(s2); }
+|
+
+  t = <RETURN> { r = new Node(Id.RETURN, t); stmt.add(r); } 
+  (e = Expression() { r.add(e); }) *
+  <SEMI>) //return expr*;
+
+  { return stmt; }
+}
+
+Node SimpleCompoundStatement() :
+{
+  Node scs = new Node(Id.SIMPLE_COMPOUND_STMNT);
+  Token left;
+  Token right;
+  Node s;
+}
+{
+  left = <LBRACE> 
+  ( s = Statement() { scs.add(s); }
+  )*
+  right = <RBRACE>
+
+  { return scs; }
+}
+
+Node Expression () :
+{
+  Node a, t;
+}
+{
+  //Identifier() BinaryPlusMin() Identifier()
+  ((LOOKAHEAD(3) a = AssignTerm() {return a;} | t = FinalExpression() {return t;})
+    // | FinalExpression(e)
+  )
+}
+
+Node FinalExpression () :
+{
+  Node n;
+  Node id;
+  Node p;
+  Node tmp;
+}
+{ 
+  (
+    n = IntegerLiteral() { return n; }
+|
+	n = CharLiteral() { return n; }
+
+|
+  <LPAREN> { p = new Node(Id.PAREN); }
+  tmp = Expression() {p.add(tmp);}
+  <RPAREN>
+  {return p;}
+
+|
+  id = Identifier()
+  (
+      (<LBRACK> 
+        (
+          tmp = FinalExpression() {id.add(tmp);}	// array with size
+        	| { {id.add(new Node(Id.INTEGER_LITERAL, new Token(AyeCConstants.INT, "-1")));} }			// array without size
+        )
+      <RBRACK>)
+    | (<LPAREN>
+        (
+          tmp = Expression() {id.add(tmp);} (<COMMA> tmp = Expression() {id.add(tmp);})*
+          | { } 
+        )
+      <RPAREN>)
+    | {}
+  )
+  {return id;}
+|
+  n = Unary()
+  tmp = FinalExpression() { n.add(tmp); return n;}
+  )
+}
+
+Node AssignTerm() :
+{
+  Node c, a;
+}
+{
+  c = CompTerm() a = AssignTermPrime(c)
+  { if(a == null) {return c;} else {return a;} }
+}
+
+Node AssignTermPrime(Node left) :
+{
+  Node op, c, a;
+}
+{
+  (op = BinaryAssign() { op.add(left); } 
+    c = CompTerm() { op.add(c); } a = AssignTermPrime(op) 
+    { if(a == null) {return op;} else {return a;} }
+    
+    | Epsilon() { return null; })
+}
+
+Node CompTerm() :
+{
+  Node a, c;
+}
+{
+  a = AddTerm() c = CompTermPrime(a)
+  { if(c == null) {return a;} else {return c;} }
+}
+
+Node CompTermPrime(Node left) :
+{
+  Node op, a, c;
+}
+{
+  (op = BinaryComp() { op.add(left); } 
+    a = AddTerm() { op.add(a); } c = CompTermPrime(op) 
+    { if(c == null) {return op;} else {return c;} }
+    
+    | Epsilon() { return null; })
+}
+
+Node AddTerm() :
+{
+  Node m, a;
+}
+{
+  m = MulTerm() a = AddTermPrime(m) 
+  { if(a == null) {return m;} else {return a;} }
+}
+
+Node AddTermPrime(Node left) :
+{
+  Node res, op, m, a;
+}
+{
+  (op = BinaryPlusMin() { op.add(left); } 
+    m = MulTerm() { op.add(m); } a = AddTermPrime(op) 
+    { if(a == null) {return op;} else {return a;} }
+    
+    | Epsilon() { return null; })
+}
+
+Node MulTerm() :
+{
+  Node left, m, t;
+}
+{
+  t = FinalExpression() m = MulTermPrime(t) 
+  { if(m == null) {return t;} else {return m;} }
+}
+
+Node MulTermPrime(Node left) :
+{
+  Node res, op, m, t;
+}
+{
+  (op = BinaryMulDiv() { op.add(left); }
+    t = FinalExpression() { op.add(t); } m = MulTermPrime(op) 
+    { if (m == null) {return op;} else {return m;} }
+    
+    | Epsilon() { return null; })
+}
+
+Node BinaryComp () :
+{
+  Token t;
+}
+{
+  (t = <LT>		// <
+| 
+  t = <GT>		// >
+| 
+  t = <LTEQ>	// <=
+| 
+  t = <GTEQ>	// >=
+|
+  t = <EQEQ>	// ==
+| 
+  t = <NOTEQ>	// !=
+| 
+  t = <ANDAND>	// &&
+| 
+  t = <OROR>)	// ||
+
+   {return new Node(Id.BINARY, t); }
+}
+
+Node BinaryAssign() :
+{
+  Token t;
+}
+{
+    t = <EQ> {return new Node(Id.BINARY, t); }
+}
+
+Node BinaryMulDiv () :
+{
+  Token t;
+}
+{
+  (t = <MUL>
+| 
+  t = <DIV>)
+
+   {return new Node(Id.BINARY, t); }
+}
+
+Node BinaryPlusMin () :
+{
+  Token t;
+}
+{
+  (t = <PLUS>
+| 
+  t = <MINUS>)
+
+   {return new Node(Id.BINARY, t); }
+}
+
+Node Unary() :
+{
+  Token t;
+}
+{ 
+  ( 
+    t = <MINUS>
+  | t = <NOT>
+  )
+
+  { return new Node(Id.UNARY, t); }
+}
+
+Node Identifier() :
+{
+  Token t;
+}
+{
+  t = <IDENT> { return new Node(Id.IDENT, t); }
+}
+
+Node IntegerLiteral() :
+{
+  Token t;
+}
+{
+ t = <INTEGER_LITERAL>
+ { return new Node(Id.INTEGER_LITERAL, t); }
+}
+
+Node CharLiteral() :
+{
+  Token t;
+}
+{
+ t = <CHAR_LITERAL>
+
+  { return new Node(Id.CHAR_LITERAL, t); }
+}
+
+Node FileName() :
+{
+	Token dot;
+}
+{
+	(<IDENT> <DOT> <IDENT>)
+	{ return new Node(Id.FILE_NAME); }
+}
+
+Node IncludeFile() :
+{
+	Node include = new Node(Id.INCLUDE);
+	Node name;
+	Token incl;
+	Token lt;
+	Token gt;
+}
+{
+	incl = <INCLUDE>
+	lt = <LT>  
+	name = FileName() { include.add(name); }
+	gt = <GT>
+	
+	{ return include; }
+}
